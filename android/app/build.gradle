@@ -51,7 +51,7 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             if (hasReleaseSigning) {
-                signingConfig signingConfigs.release
+                signingConfig = signingConfigs.release
             }
         }
     }
@@ -86,13 +86,31 @@ dependencies {
 apply from: 'capacitor.build.gradle'
 
 def googleServicesFile = file('google-services.json')
+def googleServicesBase64 = System.getenv('GOOGLE_SERVICES_JSON_BASE64')
+
+if (!googleServicesFile.exists() && googleServicesBase64?.trim()) {
+    def decoded = java.util.Base64.getMimeDecoder().decode(googleServicesBase64.trim())
+    googleServicesFile.withOutputStream { stream -> stream.write(decoded) }
+    logger.lifecycle("Decoded GOOGLE_SERVICES_JSON_BASE64 to ${googleServicesFile}")
+}
+
+def allowMissingGoogleServices = (
+    findProperty('allowMissingGoogleServices') ?: System.getenv('ALLOW_MISSING_GOOGLE_SERVICES')
+)?.toBoolean()
+
 if (googleServicesFile.exists()) {
     apply plugin: 'com.google.gms.google-services'
-} else if (releaseTaskRequested) {
+} else if (releaseTaskRequested && !allowMissingGoogleServices) {
     throw new GradleException(
         "google-services.json is required for release builds because push notifications " +
-        "use Firebase Cloud Messaging. Add it to android/app/ (it is ignored by git) or " +
-        "decode the GOOGLE_SERVICES_JSON_BASE64 CI secret. Debug builds work without it."
+        "use Firebase Cloud Messaging. Add it to android/app/ (it is ignored by git), " +
+        "set GOOGLE_SERVICES_JSON_BASE64, or pass -PallowMissingGoogleServices=true " +
+        "to build a release without push. Debug builds work without it."
+    )
+} else if (releaseTaskRequested) {
+    logger.warn(
+        "google-services.json not found; building release WITHOUT push notifications " +
+        "because allowMissingGoogleServices=true."
     )
 } else {
     logger.info("google-services.json not found; push notifications are disabled in this build")

@@ -131,7 +131,11 @@ hva som må fylles inn manuelt.
    keytool -genkeypair -v -keystore upload-keystore.jks \
      -alias upload -keyalg RSA -keysize 2048 -validity 10000
    ```
-2. Legg `android/keystore.properties` utenfor git:
+2. Kopier malen og legg `android/keystore.properties` utenfor git:
+   ```bash
+   cp android/keystore.properties.example android/keystore.properties
+   ```
+   Fyll inn verdiene:
    ```properties
    storeFile=/absolutt/sti/upload-keystore.jks
    storePassword=...

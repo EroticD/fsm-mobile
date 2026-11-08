@@ -8,7 +8,10 @@ node_modules/
 android/.gradle/
 android/app/build/
 android/local.properties
+# Signeringskonfigurasjon: ekte fil ignoreres, malen skal være med i git
 android/keystore.properties
+android/keystore.properties.*
+!android/keystore.properties.example
 android/**/*.jks
 android/**/*.keystore
 android/app/*.jks
