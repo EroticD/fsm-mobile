@@ -118,7 +118,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.release == true
     runs-on: ubuntu-latest
     env:
-      ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/upload-keystore.jks
+      ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/upload-keystore.jks
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -206,9 +206,10 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
           security import "$CERT" -k "$KEYCHAIN" -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security list-keychains -d user -s "$KEYCHAIN"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$PROFILE" "$HOME/Library/MobileDevice/Provisioning Profiles/fsm-mobile.mobileprovision"
       - name: Arkiver
