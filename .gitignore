@@ -23,3 +23,7 @@ ios/App/App/public/
 ios/App/App/capacitor.config.json
 ios/App/App/GoogleService-Info.plist
 ios/App/CapApp-SPM/.build/
+
+# IDE
+.idea/
+*.iml
