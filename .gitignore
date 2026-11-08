@@ -1,0 +1,25 @@
+node_modules/
+.DS_Store
+*.log
+.env
+.env.*
+
+# Android
+android/.gradle/
+android/app/build/
+android/local.properties
+android/keystore.properties
+android/app/*.jks
+android/app/google-services.json
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+
+# iOS
+ios/DerivedData/
+ios/**/xcuserdata/
+ios/**/*.xcuserstate
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/GoogleService-Info.plist
+ios/App/CapApp-SPM/.build/

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">FSM felt</string>
+    <string name="title_activity_main">FSM felt</string>
+    <string name="package_name">no.fsm.felt</string>
+    <string name="custom_url_scheme">no.fsm.felt</string>
+</resources>

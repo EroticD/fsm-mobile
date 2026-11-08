@@ -1,0 +1,20 @@
+{
+  "appId": "no.fsm.felt",
+  "appName": "FSM felt",
+  "webDir": "capacitor-shell",
+  "loggingBehavior": "debug",
+  "backgroundColor": "#101310",
+  "server": {
+    "allowNavigation": ["*"],
+    "cleartext": true,
+    "errorPath": "index.html"
+  },
+  "android": {
+    "backgroundColor": "#101310",
+    "allowMixedContent": false
+  },
+  "ios": {
+    "backgroundColor": "#101310",
+    "contentInset": "never"
+  }
+}
