@@ -2,13 +2,58 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feat/**"]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Build signed release artifacts (requires signing secrets)"
+        type: boolean
+        default: false
+      version_name:
+        description: "Android versionName / iOS MARKETING_VERSION (default: package.json version)"
+        type: string
+        required: false
+      version_code:
+        description: "Android versionCode (default: 1)"
+        type: string
+        required: false
+      ios_build_number:
+        description: "iOS CURRENT_PROJECT_VERSION (default: GitHub run number)"
+        type: string
+        required: false
 
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: "22"
+
 jobs:
+  push-config:
+    name: Push-configuration check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Synkroniser native prosjekter
+        run: npm run sync
+      - name: Verify debug push wiring
+        run: npm run check:push
+      - name: Verify release check catches missing secrets
+        run: |
+          # Release mode must fail without google-services.json. This keeps the
+          # check honest: it would be useless if it also passed in release.
+          if node scripts/check-push-config.mjs --mode release --platform android; then
+            echo "Release check unexpectedly passed without google-services.json" >&2
+            exit 1
+          fi
+          echo "Release check correctly rejects missing google-services.json"
+
   android:
     name: Android debugbygg
     runs-on: ubuntu-latest
@@ -16,7 +61,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - uses: actions/setup-java@v4
         with:
@@ -36,6 +81,8 @@ jobs:
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - run: npm ci
       - run: npm run sync:android
+      - name: Kontroller push-konfigurasjon (debug)
+        run: node scripts/check-push-config.mjs --mode debug --platform android
       - name: Bygg debug-APK
         run: cd android && ./gradlew assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
@@ -51,10 +98,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
       - run: npm run sync:ios
+      - name: Kontroller push-konfigurasjon (debug)
+        run: node scripts/check-push-config.mjs --mode debug --platform ios
       - name: Bygg for simulator uten signering
         run: >
           xcodebuild
@@ -65,3 +114,131 @@ jobs:
           -destination 'generic/platform=iOS Simulator'
           CODE_SIGNING_ALLOWED=NO
           build
+
+  android-release:
+    name: Android signert AAB
+    if: github.event_name == 'workflow_dispatch' && inputs.release == true
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/upload-keystore.jks
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_VERSION_NAME: ${{ inputs.version_name }}
+      ANDROID_VERSION_CODE: ${{ inputs.version_code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Installer Android SDK 36
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_HOME="$SDK"
+          export ANDROID_SDK_ROOT="$SDK"
+          if [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            export PATH="$SDK/cmdline-tools/latest/bin:$SDK/platform-tools:$PATH"
+          else
+            export PATH="$SDK/cmdline-tools/16.0/bin:$SDK/platform-tools:$PATH"
+          fi
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - run: npm ci
+      - run: npm run sync:android
+      - name: Kontroller release-secrets
+        run: |
+          test -n "$ANDROID_KEYSTORE_PASSWORD" || { echo "ANDROID_KEYSTORE_PASSWORD secret is missing" >&2; exit 1; }
+          test -n "$ANDROID_KEY_ALIAS" || { echo "ANDROID_KEY_ALIAS secret is missing" >&2; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo "ANDROID_KEY_PASSWORD secret is missing" >&2; exit 1; }
+          test -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" || { echo "ANDROID_KEYSTORE_BASE64 secret is missing" >&2; exit 1; }
+          test -n "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" || { echo "GOOGLE_SERVICES_JSON_BASE64 secret is missing" >&2; exit 1; }
+      - name: Materialiser keystore og google-services.json
+        run: |
+          printf '%s' "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          printf '%s' "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 --decode > android/app/google-services.json
+      - name: Kontroller release push-konfigurasjon
+        run: node scripts/check-push-config.mjs --mode release --platform android
+      - name: Bygg signert AAB
+        run: cd android && ./gradlew bundleRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fsm-mobile-release-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+  ios-release:
+    name: iOS signert IPA
+    if: github.event_name == 'workflow_dispatch' && inputs.release == true
+    runs-on: macos-latest
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.APPLE_PROVISIONING_PROFILE_SPECIFIER }}
+      APP_VERSION: ${{ inputs.version_name }}
+      IOS_BUILD_NUMBER: ${{ inputs.ios_build_number || github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run sync:ios
+      - name: Kontroller release-secrets
+        run: |
+          test -n "$APPLE_TEAM_ID" || { echo "APPLE_TEAM_ID secret is missing" >&2; exit 1; }
+          test -n "$APPLE_PROVISIONING_PROFILE_SPECIFIER" || { echo "APPLE_PROVISIONING_PROFILE_SPECIFIER secret is missing" >&2; exit 1; }
+          test -n "${{ secrets.APPLE_CERTIFICATE_BASE64 }}" || { echo "APPLE_CERTIFICATE_BASE64 secret is missing" >&2; exit 1; }
+          test -n "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" || { echo "APPLE_CERTIFICATE_PASSWORD secret is missing" >&2; exit 1; }
+          test -n "${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}" || { echo "APPLE_PROVISIONING_PROFILE_BASE64 secret is missing" >&2; exit 1; }
+      - name: Kontroller release push-konfigurasjon
+        run: node scripts/check-push-config.mjs --mode release --platform ios
+      - name: Importer sertifikat og provisioning profile
+        run: |
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          CERT="$RUNNER_TEMP/distribution.p12"
+          PROFILE="$RUNNER_TEMP/profile.mobileprovision"
+          printf '%s' "${{ secrets.APPLE_CERTIFICATE_BASE64 }}" | base64 --decode > "$CERT"
+          printf '%s' "${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}" | base64 --decode > "$PROFILE"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE" "$HOME/Library/MobileDevice/Provisioning Profiles/fsm-mobile.mobileprovision"
+      - name: Arkiver
+        run: >
+          xcodebuild
+          -project ios/App/App.xcodeproj
+          -scheme App
+          -configuration Release
+          -sdk iphoneos
+          -destination 'generic/platform=iOS'
+          -archivePath "$RUNNER_TEMP/App.xcarchive"
+          DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
+          CODE_SIGN_STYLE=Manual
+          PROVISIONING_PROFILE_SPECIFIER="$APPLE_PROVISIONING_PROFILE_SPECIFIER"
+          MARKETING_VERSION="${APP_VERSION:-$(node -p "require('./package.json').version")}"
+          CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER"
+          archive
+      - name: Eksporter IPA
+        run: |
+          perl -0pe 's/__TEAM_ID__/$ENV{APPLE_TEAM_ID}/g; s/__PROVISIONING_PROFILE_SPECIFIER__/$ENV{APPLE_PROVISIONING_PROFILE_SPECIFIER}/g' \
+            ios/ExportOptions.plist.template > "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fsm-mobile-release-ipa
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: error

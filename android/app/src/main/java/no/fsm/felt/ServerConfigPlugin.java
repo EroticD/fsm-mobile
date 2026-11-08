@@ -34,6 +34,8 @@ public class ServerConfigPlugin extends Plugin {
             return;
         }
 
+        unregisterTokenIfServerChanged(normalized);
+
         ServerConfigStore.set(getContext(), normalized);
         ServerConfigStore.setSetupMode(getContext(), false);
         JSObject result = new JSObject();
@@ -55,10 +57,29 @@ public class ServerConfigPlugin extends Plugin {
 
     @PluginMethod
     public void clear(PluginCall call) {
+        unregisterTokenIfServerChanged(null);
         ServerConfigStore.clear(getContext());
         ServerConfigStore.setSetupMode(getContext(), true);
         call.resolve();
         getActivity().runOnUiThread(() -> getActivity().recreate());
+    }
+
+    /**
+     * Removes the current device token from the server that is being left.
+     * The request is fire-and-forget: the WebView is recreated immediately and
+     * a failed cleanup must not block the user from changing server.
+     */
+    private void unregisterTokenIfServerChanged(String nextUrl) {
+        String token = PushStateStore.getToken(getContext());
+        String origin = PushStateStore.getOrigin(getContext());
+        if (token == null || origin == null) {
+            PushStateStore.clearRegistration(getContext());
+            return;
+        }
+        if (nextUrl != null && origin.equals(nextUrl)) return;
+
+        PushTokenApi.unregister(getContext(), origin, token);
+        PushStateStore.clearRegistration(getContext());
     }
 
     /**

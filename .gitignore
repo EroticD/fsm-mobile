@@ -9,6 +9,8 @@ android/.gradle/
 android/app/build/
 android/local.properties
 android/keystore.properties
+android/**/*.jks
+android/**/*.keystore
 android/app/*.jks
 android/app/google-services.json
 android/app/src/main/assets/public/
@@ -23,6 +25,13 @@ ios/App/App/public/
 ios/App/App/capacitor.config.json
 ios/App/App/GoogleService-Info.plist
 ios/App/CapApp-SPM/.build/
+ios/ExportOptions.plist
+ios/**/*.p12
+ios/**/*.p8
+ios/**/*.mobileprovision
+ios/**/*.cer
+ios/**/*.pem
+ios/**/*.key
 
 # IDE
 .idea/
