@@ -1,13 +1,37 @@
 package no.fsm.felt;
 
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.CapConfig;
 import com.getcapacitor.WebViewListener;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
+
+    private static final String TAG = "FsmPush";
+    private static final String PUSH_CHANNEL_ID = "fsm_default";
+    private static final String PUSH_BOOTSTRAP_ASSET = "public/fsm-push.js";
+    private static final String[] DEEP_LINK_KEYS = {
+        "url",
+        "link",
+        "path",
+        "deeplink",
+        "deepLink",
+        "deep_link",
+        "route",
+        "target"
+    };
 
     private static final String SERVER_BUTTON_JS =
         "(function(){" +
@@ -26,7 +50,18 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // The launch intent is the only reliable source for a notification tap
+        // that cold-starts the app. Read it before the WebView is created so the
+        // bootstrap can consume it as soon as the page has loaded. On
+        // configuration changes/recreates the old intent must not re-open the
+        // previous notification.
+        if (savedInstanceState == null) {
+            PushStateStore.setPendingDeepLink(this, extractDeepLink(getIntent()));
+        }
+        ensureNotificationChannel();
+
         registerPlugin(ServerConfigPlugin.class);
+        registerPlugin(FsmPushPlugin.class);
         super.onCreate(savedInstanceState);
 
         if (getBridge() != null && getBridge().getWebView() != null) {
@@ -37,10 +72,112 @@ public class MainActivity extends BridgeActivity {
                     if (ServerConfigStore.get(MainActivity.this) != null &&
                         !ServerConfigStore.isSetupMode(MainActivity.this)) {
                         webView.evaluateJavascript(SERVER_BUTTON_JS, null);
+                        injectPushBootstrap(webView);
                     }
                 }
             });
         }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String deepLink = extractDeepLink(intent);
+        if (deepLink == null) return;
+        PushStateStore.setPendingDeepLink(this, deepLink);
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().evaluateJavascript(
+                "window.__FSM_PUSH_OPEN_PENDING__ && window.__FSM_PUSH_OPEN_PENDING__();",
+                null
+            );
+        }
+    }
+
+    private void injectPushBootstrap(WebView webView) {
+        String script = readAsset(PUSH_BOOTSTRAP_ASSET);
+        if (script == null || script.isEmpty()) {
+            Log.w(TAG, "Push bootstrap asset is missing: " + PUSH_BOOTSTRAP_ASSET);
+            return;
+        }
+        webView.evaluateJavascript(script, null);
+        webView.evaluateJavascript(
+            "window.__FSM_PUSH_OPEN_PENDING__ && window.__FSM_PUSH_OPEN_PENDING__();",
+            null
+        );
+    }
+
+    private String readAsset(String path) {
+        try (InputStream stream = getAssets().open(path)) {
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            int read;
+            while ((read = stream.read(chunk)) != -1) {
+                buffer.write(chunk, 0, read);
+            }
+            return buffer.toString(StandardCharsets.UTF_8.name());
+        } catch (Exception error) {
+            Log.w(TAG, "Could not read " + path, error);
+            return null;
+        }
+    }
+
+    /**
+     * Extracts a path or URL from an FCM notification tap.
+     *
+     * FCM puts custom data keys directly into the launch intent extras. Some
+     * senders wrap them in a `data` JSON object instead, so both forms are
+     * supported. A custom URL scheme (`no.fsm.felt://...`) is also accepted.
+     */
+    private String extractDeepLink(Intent intent) {
+        if (intent == null) return null;
+
+        Uri data = intent.getData();
+        if (data != null && data.toString().trim().length() > 0) {
+            return data.toString().trim();
+        }
+
+        Bundle extras = intent.getExtras();
+        if (extras == null) return null;
+
+        for (String key : DEEP_LINK_KEYS) {
+            String value = extras.getString(key);
+            if (value != null && value.trim().length() > 0) {
+                return value.trim();
+            }
+        }
+
+        String nested = extras.getString("data");
+        if (nested != null && nested.trim().length() > 0) {
+            try {
+                JSONObject json = new JSONObject(nested);
+                for (String key : DEEP_LINK_KEYS) {
+                    if (!json.has(key)) continue;
+                    String value = json.optString(key, null);
+                    if (value != null && value.trim().length() > 0) {
+                        return value.trim();
+                    }
+                }
+            } catch (Exception error) {
+                Log.d(TAG, "Notification data was not JSON");
+            }
+        }
+
+        return null;
+    }
+
+    private void ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager == null) return;
+        NotificationChannel channel = new NotificationChannel(
+            PUSH_CHANNEL_ID,
+            getString(R.string.notification_channel_name),
+            NotificationManager.IMPORTANCE_DEFAULT
+        );
+        channel.setDescription(getString(R.string.notification_channel_description));
+        channel.enableVibration(true);
+        manager.createNotificationChannel(channel);
     }
 
     private class FsmMobileBridge {

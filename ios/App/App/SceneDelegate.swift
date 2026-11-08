@@ -102,11 +102,33 @@ class FSMBridgeViewController: CAPBridgeViewController {
                 forMainFrameOnly: true
             )
         )
+        if let pushScript = Self.pushBootstrapScript() {
+            configuration.userContentController.addUserScript(
+                WKUserScript(
+                    source: pushScript,
+                    injectionTime: .atDocumentEnd,
+                    forMainFrameOnly: true
+                )
+            )
+        }
         return configuration
     }
 
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(ServerConfigPlugin())
+        bridge?.registerPluginInstance(FsmPushPlugin())
+    }
+
+    /**
+     * The push bootstrap is copied into `public/` by `npm run sync`. Reading it
+     * from the bundle keeps the JavaScript in one place for Android and iOS.
+     */
+    private static func pushBootstrapScript() -> String? {
+        guard let url = Bundle.main.url(forResource: "public/fsm-push", withExtension: "js"),
+              let script = try? String(contentsOf: url, encoding: .utf8) else {
+            return nil
+        }
+        return script
     }
 }
 
@@ -150,6 +172,8 @@ public class ServerConfigPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
+        unregisterTokenIfServerChanged(nextUrl: PushStateStore.normalizedOrigin(url.absoluteString))
+
         ServerConfigStore.url = url
         ServerConfigStore.setupMode = false
         call.resolve(["url": url.absoluteString])
@@ -171,6 +195,7 @@ public class ServerConfigPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func clear(_ call: CAPPluginCall) {
+        unregisterTokenIfServerChanged(nextUrl: nil)
         ServerConfigStore.url = nil
         ServerConfigStore.setupMode = true
         call.resolve()
@@ -178,6 +203,25 @@ public class ServerConfigPlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async { [weak self] in
             guard let bridge = self?.bridge else { return }
             bridge.webView?.load(URLRequest(url: bridge.config.localURL))
+        }
+    }
+
+    /**
+     * Removes the device token from the server being left. Fire-and-forget: the
+     * WebView is reloaded immediately and cleanup must never block server
+     * switching.
+     */
+    private func unregisterTokenIfServerChanged(nextUrl: String?) {
+        let previousOrigin = PushStateStore.origin
+        let previousToken = PushStateStore.token
+        if let previousOrigin, let previousToken {
+            let changed = nextUrl.map { PushStateStore.normalizedOrigin(previousOrigin) != $0 } ?? true
+            if changed {
+                PushTokenApi.unregister(origin: previousOrigin, token: previousToken)
+                PushStateStore.clearRegistration()
+            }
+        } else {
+            PushStateStore.clearRegistration()
         }
     }
 }

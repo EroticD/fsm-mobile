@@ -4,4 +4,7 @@
     <string name="title_activity_main">FSM felt</string>
     <string name="package_name">no.fsm.felt</string>
     <string name="custom_url_scheme">no.fsm.felt</string>
+    <string name="notification_channel_name">FSM-varsler</string>
+    <string name="notification_channel_description">Oppdrag, meldinger og påminnelser fra FSM</string>
+    <string name="default_notification_channel_id">fsm_default</string>
 </resources>
